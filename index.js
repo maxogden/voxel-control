@@ -23,6 +23,7 @@ function Control(state, opts) {
   this.jump_speed = opts.jumpSpeed || 0.004
   this.jump_timer = this.jump_timer_max
   this.jumping = false
+  this.flying = false
   this.acceleration = opts.accelerationCurve || this.acceleration
 
   this.fire_rate = opts.fireRate || 0
@@ -79,56 +80,35 @@ proto.tick = function(dt) {
     , jump_speed = this.jump_speed
     , okay_z = abs(target.velocity.z) < this.max_speed
     , okay_x = abs(target.velocity.x) < this.max_speed
-    , at_rest = target.atRestY()
 
   if(!this._target) return
-
-  if(state.forward || state.backward) {
-    this.z_accel_timer = max(0, this.z_accel_timer - dt)
-  }
-  if(state.backward) {
-    if(target.velocity.z < this.max_speed)
-      target.velocity.z = max(min(this.max_speed, speed * dt * this.acceleration(this.z_accel_timer, this.accel_max_timer)), target.velocity.z)
-  } else if(state.forward) {
-    if(target.velocity.z > -this.max_speed)
-      target.velocity.z = min(max(-this.max_speed, -speed * dt * this.acceleration(this.z_accel_timer, this.accel_max_timer)), target.velocity.z)
-  } else {
-    this.z_accel_timer = this.accel_max_timer
-
-  }
- 
-
-  if(state.left || state.right) {
-    this.x_accel_timer = max(0, this.x_accel_timer - dt)
-  }
-
-  if(state.right) {
-    if(target.velocity.x < this.max_speed)
-      target.velocity.x = max(min(this.max_speed, speed * dt * this.acceleration(this.x_accel_timer, this.accel_max_timer)), target.velocity.x)
-  } else if(state.left) {
-    if(target.velocity.x > -this.max_speed)
-      target.velocity.x = min(max(-this.max_speed, -speed * dt * this.acceleration(this.x_accel_timer, this.accel_max_timer)), target.velocity.x)
-  } else {
-    this.x_accel_timer = this.accel_max_timer
-  }
-
-  if(state.jump) {
-    if(!this.jumping && !at_rest) {
-      // we're falling, we can't jump
-    } else if(at_rest > 0) {
-      // we hit our head
-      this.jumping = false
-    } else {
-      this.jumping = true
-      if(this.jump_timer > 0) {
-        target.velocity.y = min(target.velocity.y + jump_speed * min(dt, this.jump_timer), this.jump_max_speed)
+  
+  if (this.flying) {
+    var adjustedSpeed = speed * dt;
+    ['forward', 'backward', 'left', 'right'].map(function(dir) {
+      if (!state[dir]) return
+      switch (dir) {
+        case 'forward': target.velocity.z -= adjustedSpeed
+        case 'backward': target.velocity.z += adjustedSpeed
+        case 'left': target.velocity.x -= adjustedSpeed
+        case 'right': target.velocity.x += adjustedSpeed
       }
-      this.jump_timer = max(this.jump_timer - dt, 0)
+      setTimeout(function() {
+        target.velocity.x = 0
+        target.velocity.z = 0
+      }, jump_speed)
+    }.bind(this))
+    if (state.crouch) {
+      target.velocity.y -= jump_speed
+      setTimeout(function() {
+        target.velocity.y = 0
+      }, this.jump_timer)
     }
   } else {
-    this.jumping = false
+    this.processDirections(dt, state, target, speed)
   }
-  this.jump_timer = at_rest < 0 ? this.jump_max_timer : this.jump_timer
+  
+  this.processJump(dt, state, target, jump_speed)
 
   var can_fire = true
 
@@ -163,6 +143,63 @@ proto.tick = function(dt) {
   this.state.x_rotation_accum =
   this.state.y_rotation_accum =
   this.state.z_rotation_accum = 0
+}
+
+proto.processDirections = function(dt, state, target, speed) {
+  if(state.forward || state.backward) {
+    this.z_accel_timer = max(0, this.z_accel_timer - dt)
+  }
+  if(state.backward) {
+    if(target.velocity.z < this.max_speed)
+      target.velocity.z = max(min(this.max_speed, speed * dt * this.acceleration(this.z_accel_timer, this.accel_max_timer)), target.velocity.z)
+  } else if(state.forward) {
+    if(target.velocity.z > -this.max_speed)
+      target.velocity.z = min(max(-this.max_speed, -speed * dt * this.acceleration(this.z_accel_timer, this.accel_max_timer)), target.velocity.z)
+  } else {
+    this.z_accel_timer = this.accel_max_timer
+  }
+ 
+  if(state.left || state.right) {
+    this.x_accel_timer = max(0, this.x_accel_timer - dt)
+  }
+
+  if(state.right) {
+    if(target.velocity.x < this.max_speed)
+      target.velocity.x = max(min(this.max_speed, speed * dt * this.acceleration(this.x_accel_timer, this.accel_max_timer)), target.velocity.x)
+  } else if(state.left) {
+    if(target.velocity.x > -this.max_speed)
+      target.velocity.x = min(max(-this.max_speed, -speed * dt * this.acceleration(this.x_accel_timer, this.accel_max_timer)), target.velocity.x)
+  } else {
+    this.x_accel_timer = this.accel_max_timer
+  }
+}
+
+proto.processJump = function(dt, state, target, jump_speed) {
+  var at_rest = target.atRestY()
+  if(state.jump) {
+    if (this.flying) {
+      target.velocity.y = jump_speed
+      setTimeout(function() {
+        target.velocity.y = 0
+      }, this.jump_timer)
+      return this.jumping = false
+    }
+    if(!this.jumping && !at_rest) {
+      // we're falling, we can't jump
+    } else if(at_rest > 0) {
+      // we hit our head
+      this.jumping = false
+    } else {
+      this.jumping = true
+      if(this.jump_timer > 0) {
+        target.velocity.y = min(target.velocity.y + jump_speed * min(dt, this.jump_timer), this.jump_max_speed)
+      }
+      this.jump_timer = max(this.jump_timer - dt, 0)
+    }
+  } else {
+    this.jumping = false
+  }
+  this.jump_timer = at_rest < 0 ? this.jump_max_timer : this.jump_timer
 }
 
 proto.write = function(changes) {
